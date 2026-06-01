@@ -1391,17 +1391,21 @@
       }
 
       async function scheduleSyncToCloud() {
-        if (!getSettings().driveEnabled || !isAuthed()) return;
+        if (!getSettings().driveEnabled) return;
+        if (!isAuthed()) { pendingUpload = true; return; }  // token expired: queue and wait for re-auth
         if (!navigator.onLine) { pendingUpload = true; showDriveSyncStatus('offline'); return; }
         if (syncing) { pendingUpload = true; return; }
         syncing = true; showSyncIndicator(true);
+        let succeeded = false;
         try {
           await upload(loadTasks());
           pendingUpload = false; showDriveSyncStatus('ok');
+          succeeded = true;
         } catch (e) {
           console.warn('GDrive upload:', e.message); pendingUpload = true; showDriveSyncStatus('error');
         } finally {
           syncing = false; showSyncIndicator(false);
+          if (succeeded && pendingUpload) scheduleSyncToCloud();  // flush any queued save
         }
       }
 
@@ -1430,6 +1434,7 @@
           await requestToken('select_account');
           updateDriveSettingsUI();
           await syncFromCloud();
+          if (pendingUpload) await scheduleSyncToCloud();  // flush changes made while not authed
         } catch (e) {
           console.warn('GDrive signIn:', e.message); updateDriveSettingsUI();
         }
