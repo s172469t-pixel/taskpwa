@@ -31,6 +31,7 @@
       font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif;
       background: var(--bg); color: var(--text);
       min-height: 100dvh; overflow-x: hidden;
+      overscroll-behavior-y: contain;
     }
 
     /* ─── Header ─── */
@@ -442,6 +443,39 @@
     #sync-indicator.active { opacity: 1; }
     #sync-indicator svg { animation: spin 0.9s linear infinite; }
     @keyframes spin { to { transform: rotate(360deg); } }
+
+    /* ─── Pull to Refresh ─── */
+    #ptr-wrap {
+      position: fixed;
+      top: calc(var(--header-h) + var(--safe-top));
+      left: 0; right: 0;
+      height: 56px;
+      display: flex; align-items: center; justify-content: center;
+      z-index: 90;
+      transform: translateY(-56px);
+      will-change: transform;
+      pointer-events: none;
+      user-select: none;
+    }
+    #ptr-pill {
+      width: 38px; height: 38px;
+      background: var(--card);
+      border-radius: 50%;
+      box-shadow: 0 2px 10px rgba(0,0,0,0.2);
+      display: flex; align-items: center; justify-content: center;
+    }
+    #ptr-arrow {
+      display: flex; align-items: center; justify-content: center;
+      color: var(--accent);
+      transition: transform 0.25s cubic-bezier(0.4,0,0.2,1);
+    }
+    #ptr-wrap.ptr-ready #ptr-arrow { transform: rotate(180deg); }
+    #ptr-spin {
+      display: none; align-items: center; justify-content: center;
+      animation: spin 0.9s linear infinite;
+    }
+    #ptr-wrap.ptr-loading #ptr-arrow { display: none; }
+    #ptr-wrap.ptr-loading #ptr-spin  { display: flex; }
   </style>
 </head>
 <body>
@@ -462,6 +496,22 @@
       </svg>
     </div>
   </header>
+
+  <!-- Pull-to-refresh indicator -->
+  <div id="ptr-wrap" aria-hidden="true">
+    <div id="ptr-pill">
+      <div id="ptr-arrow">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <line x1="12" y1="5" x2="12" y2="19"/><polyline points="5 12 12 19 19 12"/>
+        </svg>
+      </div>
+      <div id="ptr-spin">
+        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+          <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+        </svg>
+      </div>
+    </div>
+  </div>
 
   <!-- Notification banner -->
   <div id="notif-banner" role="alert">
@@ -722,7 +772,11 @@
       try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; }
     }
     function saveTasksLocal(t) { localStorage.setItem(STORAGE_KEY, JSON.stringify(t)); }
-    function saveTasks(t) { saveTasksLocal(t); GDriveSync.scheduleSyncToCloud(); }
+    function saveTasks(t) {
+      saveTasksLocal(t);
+      console.log('[Drive] saveTasks: local saved, scheduling upload (%d tasks)', t.length);
+      GDriveSync.scheduleSyncToCloud();
+    }
 
     function addTask(data) {
       const t = loadTasks();
@@ -1296,75 +1350,124 @@
       let syncing = false;
       let pendingUpload = false;
 
+      // ── 認証状態の読み込み ──────────────────────────────────────
       function loadStored() {
         try {
           const d = JSON.parse(localStorage.getItem(GDRIVE_TOKEN_KEY) || 'null');
-          if (d && d.t && d.e > Date.now()) { accessToken = d.t; tokenExpiry = d.e; }
+          if (d && d.t && d.e > Date.now()) {
+            accessToken = d.t; tokenExpiry = d.e;
+            console.log('[Drive] loadStored: 有効なトークンあり (残り %ds)', Math.round((d.e - Date.now()) / 1000));
+          } else {
+            console.log('[Drive] loadStored: 有効なトークンなし');
+          }
         } catch {}
         cachedFileId = localStorage.getItem(GDRIVE_FILEID_KEY) || null;
+        console.log('[Drive] loadStored: cachedFileId =', cachedFileId);
       }
+
       function storeToken(tok, expiresIn) {
         accessToken = tok;
         tokenExpiry = Date.now() + (expiresIn - 60) * 1000;
         localStorage.setItem(GDRIVE_TOKEN_KEY, JSON.stringify({ t: accessToken, e: tokenExpiry }));
+        console.log('[Drive] storeToken: 新しいトークンを保存 (expires_in=%ds)', expiresIn);
       }
+
       function clearAuth() {
         accessToken = null; tokenExpiry = 0; cachedFileId = null;
         localStorage.removeItem(GDRIVE_TOKEN_KEY); localStorage.removeItem(GDRIVE_FILEID_KEY);
+        console.log('[Drive] clearAuth: 認証情報を削除');
       }
+
       function isAuthed() { return !!accessToken && Date.now() < tokenExpiry; }
 
+      // ── GIS 初期化 ──────────────────────────────────────────────
       function initGIS() {
-        if (!GDRIVE_CLIENT_ID || typeof google === 'undefined' || tokenClient) return;
+        if (!GDRIVE_CLIENT_ID) { console.warn('[Drive] initGIS: GDRIVE_CLIENT_ID が未設定'); return; }
+        if (typeof google === 'undefined') { console.warn('[Drive] initGIS: google ライブラリ未ロード'); return; }
+        if (tokenClient) { console.log('[Drive] initGIS: 既に初期化済み'); return; }
         tokenClient = google.accounts.oauth2.initTokenClient({
           client_id: GDRIVE_CLIENT_ID,
           scope: 'https://www.googleapis.com/auth/drive.file',
           callback: () => {},
         });
+        console.log('[Drive] initGIS: tokenClient 作成完了');
       }
+
+      // ── トークン取得 ────────────────────────────────────────────
       function requestToken(prompt) {
+        console.log('[Drive] requestToken: prompt =', prompt || '(空)');
         return new Promise((resolve, reject) => {
           initGIS();
-          if (!tokenClient) { reject(new Error('GDRIVE_CLIENT_ID が未設定です')); return; }
+          if (!tokenClient) {
+            console.error('[Drive] requestToken: tokenClient が null — GIS スクリプトのロード失敗?');
+            reject(new Error('GIS tokenClient 未初期化')); return;
+          }
           tokenClient.callback = r => {
-            if (r.error) { reject(new Error(r.error)); return; }
+            if (r.error) {
+              console.error('[Drive] requestToken: OAuthエラー =', r.error, r.error_description || '');
+              reject(new Error(r.error)); return;
+            }
+            console.log('[Drive] requestToken: トークン取得成功 (expires_in=%d)', r.expires_in);
             storeToken(r.access_token, r.expires_in);
             resolve(r.access_token);
           };
           tokenClient.requestAccessToken({ prompt: prompt || '' });
         });
       }
+
       async function getToken() {
-        if (isAuthed()) return accessToken;
+        if (isAuthed()) {
+          console.log('[Drive] getToken: 保存済みトークンを使用 (残り %ds)', Math.round((tokenExpiry - Date.now()) / 1000));
+          return accessToken;
+        }
+        console.log('[Drive] getToken: トークン期限切れ、新規取得を試みる...');
         return requestToken('');
       }
 
+      // ── ファイルID検索 ──────────────────────────────────────────
       async function findFileId(token) {
-        if (cachedFileId) return cachedFileId;
+        if (cachedFileId) {
+          console.log('[Drive] findFileId: キャッシュ使用 fileId =', cachedFileId);
+          return cachedFileId;
+        }
+        console.log('[Drive] findFileId: Drive 内の "%s" を検索...', GDRIVE_FILE_NAME);
         const q = encodeURIComponent(`name='${GDRIVE_FILE_NAME}' and trashed=false`);
         const r = await fetch(
           `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&spaces=drive`,
           { headers: { Authorization: `Bearer ${token}` } }
         );
-        if (!r.ok) throw new Error('search_failed');
+        console.log('[Drive] findFileId: 検索レスポンス HTTP', r.status);
+        if (!r.ok) { console.error('[Drive] findFileId: 失敗', r.status, r.statusText); throw new Error('search_failed'); }
         const { files } = await r.json();
+        console.log('[Drive] findFileId:', files?.length ?? 0, '件ヒット');
         if (files && files.length > 0) {
           cachedFileId = files[0].id; localStorage.setItem(GDRIVE_FILEID_KEY, cachedFileId);
+          console.log('[Drive] findFileId: fileId =', cachedFileId);
         }
         return cachedFileId;
       }
 
+      // ── アップロード ────────────────────────────────────────────
       async function upload(tasks) {
+        console.log('[Drive] upload: %d 件のタスクをアップロード開始', tasks.length);
         const token = await getToken();
         const id    = await findFileId(token);
         const body  = JSON.stringify(tasks, null, 2);
         if (id) {
+          console.log('[Drive] upload: PATCH (既存ファイル更新) fileId =', id);
           const r = await fetch(
             `https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=media`,
             { method: 'PATCH', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body }
           );
-          if (!r.ok) { cachedFileId = null; localStorage.removeItem(GDRIVE_FILEID_KEY); throw new Error('upload_failed'); }
+          console.log('[Drive] upload: PATCH レスポンス HTTP', r.status);
+          if (!r.ok) {
+            console.error('[Drive] upload: PATCH 失敗', r.status, r.statusText);
+            cachedFileId = null; localStorage.removeItem(GDRIVE_FILEID_KEY);
+            throw new Error('upload_failed');
+          }
+          console.log('[Drive] upload: PATCH 成功');
         } else {
+          console.log('[Drive] upload: POST (新規ファイル作成) multipart');
           const form = new FormData();
           form.append('metadata', new Blob([JSON.stringify({ name: GDRIVE_FILE_NAME, mimeType: 'application/json' })], { type: 'application/json' }));
           form.append('media',    new Blob([body], { type: 'application/json' }));
@@ -1372,80 +1475,130 @@
             'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
             { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form }
           );
-          if (!r.ok) throw new Error('create_failed');
+          console.log('[Drive] upload: POST レスポンス HTTP', r.status);
+          if (!r.ok) { console.error('[Drive] upload: POST 失敗', r.status, r.statusText); throw new Error('create_failed'); }
           const { id: newId } = await r.json();
           cachedFileId = newId; localStorage.setItem(GDRIVE_FILEID_KEY, newId);
+          console.log('[Drive] upload: 新規ファイル作成完了 fileId =', newId);
         }
       }
 
+      // ── ダウンロード ────────────────────────────────────────────
       async function download() {
+        console.log('[Drive] download: 開始');
         const token = await getToken();
         const id    = await findFileId(token);
-        if (!id) return null;
+        if (!id) { console.log('[Drive] download: Drive にファイルなし'); return null; }
+        console.log('[Drive] download: ファイル取得 fileId =', id);
         const r = await fetch(
           `https://www.googleapis.com/drive/v3/files/${id}?alt=media`,
           { headers: { Authorization: `Bearer ${token}` } }
         );
-        if (!r.ok) throw new Error('download_failed');
-        return r.json();
+        console.log('[Drive] download: レスポンス HTTP', r.status);
+        if (!r.ok) { console.error('[Drive] download: 失敗', r.status, r.statusText); throw new Error('download_failed'); }
+        const data = await r.json();
+        console.log('[Drive] download: %s 件のタスクを取得', Array.isArray(data) ? data.length : '不正データ');
+        return data;
       }
 
+      // ── クラウドへの書き込み ────────────────────────────────────
       async function scheduleSyncToCloud() {
-        if (!getSettings().driveEnabled) return;
-        if (!isAuthed()) { pendingUpload = true; return; }  // token expired: queue and wait for re-auth
-        if (!navigator.onLine) { pendingUpload = true; showDriveSyncStatus('offline'); return; }
-        if (syncing) { pendingUpload = true; return; }
+        const s = getSettings();
+        console.log('[Drive] scheduleSyncToCloud: driveEnabled=%s isAuthed=%s online=%s syncing=%s pending=%s',
+          s.driveEnabled, isAuthed(), navigator.onLine, syncing, pendingUpload);
+
+        if (!s.driveEnabled) { console.log('[Drive] スキップ: Drive 同期が無効'); return; }
+        if (!isAuthed()) {
+          pendingUpload = true;
+          console.log('[Drive] スキップ: トークン期限切れ → pendingUpload をセット (再ログインで自動アップロード)');
+          return;
+        }
+        if (!navigator.onLine) {
+          pendingUpload = true; showDriveSyncStatus('offline');
+          console.log('[Drive] スキップ: オフライン → pendingUpload をセット');
+          return;
+        }
+        if (syncing) {
+          pendingUpload = true;
+          console.log('[Drive] スキップ: 同期中 → pendingUpload をセット');
+          return;
+        }
+
         syncing = true; showSyncIndicator(true);
         let succeeded = false;
         try {
           await upload(loadTasks());
           pendingUpload = false; showDriveSyncStatus('ok');
           succeeded = true;
+          console.log('[Drive] scheduleSyncToCloud: アップロード完了');
         } catch (e) {
-          console.warn('GDrive upload:', e.message); pendingUpload = true; showDriveSyncStatus('error');
+          console.warn('[Drive] scheduleSyncToCloud: アップロード失敗 —', e.message);
+          pendingUpload = true; showDriveSyncStatus('error');
         } finally {
           syncing = false; showSyncIndicator(false);
-          if (succeeded && pendingUpload) scheduleSyncToCloud();  // flush any queued save
+          if (succeeded && pendingUpload) {
+            console.log('[Drive] scheduleSyncToCloud: キュー済みの書き込みを再実行');
+            scheduleSyncToCloud();
+          }
         }
       }
 
+      // ── クラウドからの読み込み ──────────────────────────────────
       async function syncFromCloud() {
-        if (!getSettings().driveEnabled) return;
-        if (!navigator.onLine) return;
+        const s = getSettings();
+        console.log('[Drive] syncFromCloud: driveEnabled=%s isAuthed=%s online=%s', s.driveEnabled, isAuthed(), navigator.onLine);
+        if (!s.driveEnabled) { console.log('[Drive] syncFromCloud スキップ: Drive 無効'); return; }
+        if (!isAuthed()) { console.log('[Drive] syncFromCloud スキップ: 未認証'); return; }
+        if (!navigator.onLine) { console.log('[Drive] syncFromCloud スキップ: オフライン'); return; }
         showSyncIndicator(true);
         try {
           const data = await download();
           if (Array.isArray(data)) {
+            console.log('[Drive] syncFromCloud: %d 件のタスクをローカルに適用', data.length);
             saveTasksLocal(data); renderTasks();
             if (manageOpen) renderManageScreen();
             showDriveSyncStatus('ok');
           } else {
+            console.log('[Drive] syncFromCloud: クラウドにデータなし → ローカルをアップロード');
             await upload(loadTasks()); showDriveSyncStatus('ok');
           }
         } catch (e) {
-          console.warn('GDrive download:', e.message); showDriveSyncStatus('error');
+          console.warn('[Drive] syncFromCloud: エラー —', e.message); showDriveSyncStatus('error');
         } finally {
           showSyncIndicator(false);
         }
       }
 
+      // ── サインイン / サインアウト ────────────────────────────────
       async function signIn() {
+        console.log('[Drive] signIn: 開始');
         try {
           await requestToken('select_account');
+          console.log('[Drive] signIn: 認証成功');
           updateDriveSettingsUI();
           await syncFromCloud();
-          if (pendingUpload) await scheduleSyncToCloud();  // flush changes made while not authed
+          if (pendingUpload) {
+            console.log('[Drive] signIn: pendingUpload あり → 未送信分をアップロード');
+            await scheduleSyncToCloud();
+          }
         } catch (e) {
-          console.warn('GDrive signIn:', e.message); updateDriveSettingsUI();
+          console.warn('[Drive] signIn: 失敗 —', e.message); updateDriveSettingsUI();
         }
       }
+
       function signOut() {
+        console.log('[Drive] signOut');
         if (accessToken && typeof google !== 'undefined') {
           try { google.accounts.oauth2.revoke(accessToken, () => {}); } catch {}
         }
         clearAuth(); updateDriveSettingsUI(); showDriveSyncStatus('');
       }
-      function init() { loadStored(); initGIS(); }
+
+      function init() {
+        console.log('[Drive] init: 開始 (clientId=%s)', GDRIVE_CLIENT_ID ? '設定済み' : '未設定');
+        loadStored(); initGIS();
+        console.log('[Drive] init: 完了 isAuthed=%s', isAuthed());
+      }
 
       return { init, signIn, signOut, isAuthed, scheduleSyncToCloud, syncFromCloud,
                flushPending: scheduleSyncToCloud };
@@ -1469,6 +1622,93 @@
         if (e.data && e.data.type === 'SYNC_TASKS') GDriveSync.flushPending();
       });
     }
+
+    // ─── Pull to Refresh ─────────────────────────────────────────
+    const PTR_HEIGHT    = 56;  // indicator height = pull distance to fully reveal (px)
+    const PTR_THRESHOLD = 72;  // pull distance to arm the refresh trigger (px)
+
+    let ptrStartY   = 0;
+    let ptrDeltaY   = 0;
+    let ptrTracking = false;
+    let ptrLoading  = false;
+
+    const ptrWrap = document.getElementById('ptr-wrap');
+
+    function ptrSetY(py) { ptrWrap.style.transform = `translateY(${py}px)`; }
+
+    function ptrSnapBack() {
+      ptrWrap.style.transition = 'transform 0.3s cubic-bezier(0.4,0,0.2,1)';
+      ptrSetY(-PTR_HEIGHT);
+      ptrWrap.classList.remove('ptr-ready', 'ptr-loading');
+    }
+
+    // touchstart: arm PTR only when at scroll-top and no modal is open
+    document.addEventListener('touchstart', e => {
+      if (ptrLoading) return;
+      if (document.getElementById('manage-screen').classList.contains('open'))  return;
+      if (document.getElementById('settings-screen').classList.contains('open')) return;
+      if (document.getElementById('sheet').classList.contains('open'))           return;
+      const scrollTop = (document.scrollingElement || document.documentElement).scrollTop;
+      if (scrollTop > 2) return;
+      ptrStartY   = e.touches[0].clientY;
+      ptrDeltaY   = 0;
+      ptrTracking = true;
+      ptrWrap.style.transition = 'none';
+    }, { passive: true });
+
+    // touchmove: slide indicator and (critically) preventDefault to block native PTR/bounce
+    document.addEventListener('touchmove', e => {
+      if (!ptrTracking || ptrLoading) return;
+      const dy = e.touches[0].clientY - ptrStartY;
+      if (dy <= 0) { ptrTracking = false; return; }
+      const scrollTop = (document.scrollingElement || document.documentElement).scrollTop;
+      if (scrollTop > 2) { ptrTracking = false; return; }
+
+      e.preventDefault();  // must be non-passive to call this
+      ptrDeltaY = dy;
+
+      // rubber-band: full travel until indicator is visible, then 30% past that
+      const eff    = dy <= PTR_HEIGHT ? dy : PTR_HEIGHT + (dy - PTR_HEIGHT) * 0.3;
+      const transY = Math.min(eff - PTR_HEIGHT, 0);  // clamp: never go below header
+      ptrSetY(transY);
+      ptrWrap.classList.toggle('ptr-ready', dy >= PTR_THRESHOLD);
+    }, { passive: false });
+
+    // release: trigger sync if past threshold, otherwise snap back
+    async function ptrRelease() {
+      if (!ptrTracking) return;
+      ptrTracking = false;
+      const dy = ptrDeltaY;
+      ptrDeltaY = 0;
+
+      if (dy >= PTR_THRESHOLD) {
+        ptrLoading = true;
+        ptrWrap.classList.remove('ptr-ready');
+        ptrWrap.classList.add('ptr-loading');
+        ptrWrap.style.transition = 'transform 0.15s ease';
+        ptrSetY(0);  // hold indicator visible while syncing
+
+        const s = getSettings();
+        if (s.driveEnabled && GDriveSync.isAuthed() && navigator.onLine) {
+          await GDriveSync.syncFromCloud();
+        } else {
+          renderTasks();  // local refresh fallback
+        }
+
+        await new Promise(r => setTimeout(r, 400));  // brief hold so user sees completion
+        ptrLoading = false;
+        ptrSnapBack();
+      } else {
+        ptrSnapBack();
+      }
+    }
+
+    document.addEventListener('touchend',    () => ptrRelease(),          { passive: true });
+    document.addEventListener('touchcancel', () => {
+      if (!ptrTracking) return;
+      ptrTracking = false; ptrDeltaY = 0;
+      ptrSnapBack();
+    }, { passive: true });
 
     // ─── Init ────────────────────────────────────────────────────
     GDriveSync.init();
