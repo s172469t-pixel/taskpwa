@@ -758,8 +758,9 @@
     // Google Cloud Console > OAuth 2.0 クライアントID（ウェブアプリ）を設定してください
     const GDRIVE_CLIENT_ID = '495529323787-74hfjtbva20vvj312f94g5dh4e5rgags.apps.googleusercontent.com';
     const GDRIVE_FILE_NAME = 'tasks.json';
-    const GDRIVE_TOKEN_KEY = 'taskpwa_gdrive_token';
+    const GDRIVE_TOKEN_KEY  = 'taskpwa_gdrive_token';
     const GDRIVE_FILEID_KEY = 'taskpwa_gdrive_fileid';
+    const GDRIVE_AUTHED_KEY = 'taskpwa_gdrive_authed';  // ログイン済みフラグ（自動ログインに使用）
 
     const DEADLINE_LABEL = {
       asap:'ASAP', today:'今日中', fri:'今週中(金)',
@@ -1349,6 +1350,8 @@
       let cachedFileId = null;
       let syncing = false;
       let pendingUpload = false;
+      let hadAuth = false;               // 過去にログインした記録（自動ログイン判定に使用）
+      let silentRenewalPending = false;  // サイレント更新の重複実行防止フラグ
 
       // ── 認証状態の読み込み ──────────────────────────────────────
       function loadStored() {
@@ -1358,24 +1361,29 @@
             accessToken = d.t; tokenExpiry = d.e;
             console.log('[Drive] loadStored: 有効なトークンあり (残り %ds)', Math.round((d.e - Date.now()) / 1000));
           } else {
-            console.log('[Drive] loadStored: 有効なトークンなし');
+            console.log('[Drive] loadStored: 有効なトークンなし（期限切れまたは未ログイン）');
           }
         } catch {}
         cachedFileId = localStorage.getItem(GDRIVE_FILEID_KEY) || null;
-        console.log('[Drive] loadStored: cachedFileId =', cachedFileId);
+        hadAuth      = !!localStorage.getItem(GDRIVE_AUTHED_KEY);
+        console.log('[Drive] loadStored: cachedFileId=%s hadAuth=%s', cachedFileId, hadAuth);
       }
 
       function storeToken(tok, expiresIn) {
         accessToken = tok;
         tokenExpiry = Date.now() + (expiresIn - 60) * 1000;
+        hadAuth = true;
         localStorage.setItem(GDRIVE_TOKEN_KEY, JSON.stringify({ t: accessToken, e: tokenExpiry }));
-        console.log('[Drive] storeToken: 新しいトークンを保存 (expires_in=%ds)', expiresIn);
+        localStorage.setItem(GDRIVE_AUTHED_KEY, '1');
+        console.log('[Drive] storeToken: トークンを保存 (expires_in=%ds, 次回起動時に自動ログイン可)', expiresIn);
       }
 
       function clearAuth() {
-        accessToken = null; tokenExpiry = 0; cachedFileId = null;
-        localStorage.removeItem(GDRIVE_TOKEN_KEY); localStorage.removeItem(GDRIVE_FILEID_KEY);
-        console.log('[Drive] clearAuth: 認証情報を削除');
+        accessToken = null; tokenExpiry = 0; cachedFileId = null; hadAuth = false;
+        localStorage.removeItem(GDRIVE_TOKEN_KEY);
+        localStorage.removeItem(GDRIVE_FILEID_KEY);
+        localStorage.removeItem(GDRIVE_AUTHED_KEY);
+        console.log('[Drive] clearAuth: 認証情報をすべて削除（次回は手動ログインが必要）');
       }
 
       function isAuthed() { return !!accessToken && Date.now() < tokenExpiry; }
@@ -1395,14 +1403,19 @@
 
       // ── トークン取得 ────────────────────────────────────────────
       function requestToken(prompt) {
-        console.log('[Drive] requestToken: prompt =', prompt || '(空)');
+        console.log('[Drive] requestToken: prompt="%s"', prompt || '(空)');
         return new Promise((resolve, reject) => {
           initGIS();
           if (!tokenClient) {
             console.error('[Drive] requestToken: tokenClient が null — GIS スクリプトのロード失敗?');
             reject(new Error('GIS tokenClient 未初期化')); return;
           }
+          // サイレント更新時はタイムアウトを設ける（ポップアップが表示されない場合への備え）
+          const timer = prompt === ''
+            ? setTimeout(() => { console.warn('[Drive] requestToken: タイムアウト'); reject(new Error('timeout')); }, 15000)
+            : null;
           tokenClient.callback = r => {
+            if (timer) clearTimeout(timer);
             if (r.error) {
               console.error('[Drive] requestToken: OAuthエラー =', r.error, r.error_description || '');
               reject(new Error(r.error)); return;
@@ -1422,6 +1435,36 @@
         }
         console.log('[Drive] getToken: トークン期限切れ、新規取得を試みる...');
         return requestToken('');
+      }
+
+      // ── サイレント自動ログイン ───────────────────────────────────
+      // GIS のサイレントトークン更新を利用。ブラウザに有効な Google セッションがある限り
+      // UI（ポップアップ等）を表示せずにトークンを更新できる。
+      // hadAuth フラグがない（初回利用）場合はスキップし、手動ログインを要求する。
+      async function tryAutoLogin() {
+        if (!hadAuth) {
+          console.log('[Drive] tryAutoLogin: 初回利用のためスキップ（手動ログインが必要）');
+          return false;
+        }
+        if (isAuthed()) {
+          console.log('[Drive] tryAutoLogin: トークン有効 → スキップ');
+          return true;
+        }
+        if (!navigator.onLine) {
+          console.log('[Drive] tryAutoLogin: オフライン → スキップ');
+          return false;
+        }
+        console.log('[Drive] tryAutoLogin: サイレント更新を試みる...');
+        try {
+          await requestToken('');  // prompt='' → 既存 Google セッションで UI なし更新を試みる
+          console.log('[Drive] tryAutoLogin: 成功 → 自動ログイン完了');
+          return true;
+        } catch (e) {
+          console.log('[Drive] tryAutoLogin: 失敗 (%s) → 手動ログインが必要', e.message);
+          // access_denied はアクセス取り消し済み → 認証情報をクリア
+          if (e.message === 'access_denied') clearAuth();
+          return false;
+        }
       }
 
       // ── ファイルID検索 ──────────────────────────────────────────
@@ -1510,7 +1553,21 @@
         if (!s.driveEnabled) { console.log('[Drive] スキップ: Drive 同期が無効'); return; }
         if (!isAuthed()) {
           pendingUpload = true;
-          console.log('[Drive] スキップ: トークン期限切れ → pendingUpload をセット (再ログインで自動アップロード)');
+          if (hadAuth && !silentRenewalPending) {
+            // トークン期限切れだが過去ログイン済み → バックグラウンドでサイレント更新を試みる
+            silentRenewalPending = true;
+            console.log('[Drive] scheduleSyncToCloud: トークン期限切れ → バックグラウンドでサイレント更新を試みる');
+            tryAutoLogin().then(ok => {
+              silentRenewalPending = false;
+              updateDriveSettingsUI();
+              if (ok && pendingUpload) {
+                console.log('[Drive] サイレント更新成功 → pendingUpload をフラッシュ');
+                scheduleSyncToCloud();
+              }
+            });
+          } else {
+            console.log('[Drive] スキップ: 未認証 → pendingUpload をセット (silentRenewalPending=%s)', silentRenewalPending);
+          }
           return;
         }
         if (!navigator.onLine) {
@@ -1594,15 +1651,40 @@
         clearAuth(); updateDriveSettingsUI(); showDriveSyncStatus('');
       }
 
-      function init() {
-        console.log('[Drive] init: 開始 (clientId=%s)', GDRIVE_CLIENT_ID ? '設定済み' : '未設定');
-        loadStored(); initGIS();
-        console.log('[Drive] init: 完了 isAuthed=%s', isAuthed());
+      // GIS ライブラリロード完了時のコールバック（window.onGoogleLibraryLoad 経由で呼ばれる）
+      // async defer のため inline script 実行後に GIS がロードされ、このメソッドが呼ばれる
+      async function onGISLoad() {
+        console.log('[Drive] onGISLoad: GIS ライブラリロード完了');
+        initGIS();  // tokenClient を作成
+        const s = getSettings();
+        if (!s.driveEnabled) return;
+        if (!isAuthed()) {
+          // 起動時にトークンが期限切れ → サイレント更新で自動ログインを試みる
+          const ok = await tryAutoLogin();
+          updateDriveSettingsUI();
+          if (ok && navigator.onLine) {
+            console.log('[Drive] onGISLoad: 自動ログイン成功 → クラウドから同期');
+            await syncFromCloud();
+            if (pendingUpload) await scheduleSyncToCloud();
+          }
+        }
+        // トークンが有効な場合は起動時の init コードが既に syncFromCloud を呼んでいる
       }
 
-      return { init, signIn, signOut, isAuthed, scheduleSyncToCloud, syncFromCloud,
+      function init() {
+        console.log('[Drive] init: 開始 (clientId=%s)', GDRIVE_CLIENT_ID ? '設定済み' : '未設定');
+        loadStored();
+        initGIS();  // GIS がロード済みなら tokenClient を作成、未ロードなら onGISLoad で後処理
+        console.log('[Drive] init: 完了 isAuthed=%s hadAuth=%s', isAuthed(), hadAuth);
+      }
+
+      return { init, signIn, signOut, isAuthed, onGISLoad, scheduleSyncToCloud, syncFromCloud,
                flushPending: scheduleSyncToCloud };
     })();
+
+    // GIS ライブラリがロードされたときに自動ログインを試みる
+    // （async defer のため inline script の実行完了後に GIS が呼び出す）
+    window.onGoogleLibraryLoad = () => GDriveSync.onGISLoad();
 
     // ─── Drive 設定ハンドラ ───────────────────────────────────────
     document.getElementById('setting-drive-toggle').addEventListener('change', async e => {
