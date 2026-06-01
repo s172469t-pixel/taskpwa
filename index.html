@@ -1,0 +1,1483 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no, viewport-fit=cover">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="タスク管理">
+  <meta name="theme-color" content="#4f46e5">
+  <link rel="manifest" href="/manifest.json">
+  <script src="https://accounts.google.com/gsi/client" async defer></script>
+  <title>タスク管理</title>
+  <style>
+    *, *::before, *::after { box-sizing: border-box; margin: 0; padding: 0; }
+
+    :root {
+      --safe-top: env(safe-area-inset-top);
+      --safe-bottom: env(safe-area-inset-bottom);
+      --header-h: 56px;
+      --accent: #007AFF;
+      --bg: #F2F2F7;
+      --card: #FFFFFF;
+      --text: #1C1C1E;
+      --sub: #8E8E93;
+      --danger: #FF3B30;
+      --green: #34C759;
+      --orange: #FF9500;
+    }
+
+    body {
+      font-family: -apple-system, BlinkMacSystemFont, 'Hiragino Sans', sans-serif;
+      background: var(--bg); color: var(--text);
+      min-height: 100dvh; overflow-x: hidden;
+    }
+
+    /* ─── Header ─── */
+    header {
+      position: fixed; top: 0; left: 0; right: 0;
+      height: calc(var(--header-h) + var(--safe-top));
+      padding-top: var(--safe-top);
+      background: rgba(255,255,255,0.85);
+      backdrop-filter: saturate(180%) blur(20px);
+      -webkit-backdrop-filter: saturate(180%) blur(20px);
+      border-bottom: 1px solid rgba(0,0,0,0.1);
+      display: flex; align-items: center; padding-inline: 12px;
+      z-index: 100;
+    }
+    .header-title {
+      position: absolute; left: 50%; transform: translateX(-50%);
+      font-size: 17px; font-weight: 600;
+    }
+
+    /* ─── Hamburger ─── */
+    #hamburger-btn {
+      width: 44px; height: 44px;
+      display: flex; align-items: center; justify-content: center;
+      background: none; border: none; cursor: pointer;
+      -webkit-tap-highlight-color: transparent; flex-shrink: 0;
+      color: var(--text);
+    }
+
+    /* ─── Notification banner ─── */
+    #notif-banner {
+      position: fixed;
+      top: calc(var(--header-h) + var(--safe-top));
+      left: 0; right: 0;
+      background: var(--accent); color: white;
+      z-index: 110;
+      opacity: 0;
+      pointer-events: none;
+      transform: translateY(-6px);
+      transition: opacity 0.25s, transform 0.25s cubic-bezier(0.4,0,0.2,1);
+      display: flex; align-items: center;
+      padding: 11px 14px; gap: 10px;
+      box-shadow: 0 4px 16px rgba(0,122,255,0.35);
+    }
+    #notif-banner.show {
+      opacity: 1;
+      pointer-events: auto;
+      transform: translateY(0);
+    }
+    #notif-banner-text { flex: 1; font-size: 13px; font-weight: 500; line-height: 1.3; }
+    #notif-banner-actions { display: flex; gap: 6px; flex-shrink: 0; }
+    .banner-btn {
+      padding: 5px 11px; border-radius: 7px;
+      border: none; cursor: pointer; font-family: inherit;
+      font-size: 13px; font-weight: 600;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #notif-banner-check { background: white; color: var(--accent); }
+    #notif-banner-close { background: rgba(255,255,255,0.22); color: white; font-size: 16px; padding: 4px 10px; }
+
+    /* ─── Drawer ─── */
+    #drawer-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+      z-index: 200; opacity: 0; pointer-events: none; transition: opacity 0.25s;
+    }
+    #drawer-overlay.open { opacity: 1; pointer-events: auto; }
+    #drawer {
+      position: fixed; top: 0; left: 0; bottom: 0; width: 280px;
+      background: var(--card); z-index: 201;
+      transform: translateX(-100%);
+      transition: transform 0.3s cubic-bezier(0.4,0,0.2,1);
+      display: flex; flex-direction: column; padding-top: var(--safe-top);
+    }
+    #drawer.open { transform: translateX(0); }
+    .drawer-header {
+      height: var(--header-h); display: flex; align-items: center;
+      padding-inline: 20px; font-size: 20px; font-weight: 700;
+      border-bottom: 1px solid rgba(0,0,0,0.08);
+    }
+    .drawer-menu { list-style: none; padding: 12px 0; }
+    .drawer-menu li { display: block; }
+    .drawer-menu li a {
+      display: flex; align-items: center; gap: 14px; padding: 16px 20px;
+      font-size: 16px; font-weight: 500; color: var(--text); text-decoration: none;
+      -webkit-tap-highlight-color: transparent; cursor: pointer;
+      border-radius: 0; transition: background 0.12s;
+    }
+    .drawer-menu li a:active { background: var(--bg); }
+    .drawer-menu li a .icon { font-size: 20px; width: 26px; text-align: center; flex-shrink: 0; }
+
+    /* ─── Main ─── */
+    main {
+      padding-top: calc(var(--header-h) + var(--safe-top) + 16px);
+      padding-bottom: calc(88px + var(--safe-bottom));
+      padding-inline: 16px; min-height: 100dvh;
+    }
+    .section-label {
+      font-size: 13px; font-weight: 600; color: var(--sub);
+      text-transform: uppercase; letter-spacing: 0.5px;
+      margin-bottom: 8px; padding-left: 4px;
+    }
+    .task-list { display: flex; flex-direction: column; gap: 10px; margin-bottom: 24px; }
+
+    /* ─── Task card ─── */
+    .task-card {
+      background: var(--card); border-radius: 12px; padding: 14px 16px;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.08); cursor: pointer;
+      -webkit-tap-highlight-color: transparent; user-select: none;
+      transition: transform 0.1s, box-shadow 0.1s;
+    }
+    .task-card.pop-active { box-shadow: 0 4px 16px rgba(0,0,0,0.15); transform: scale(0.99); }
+    .task-card-title { font-size: 15px; font-weight: 500; margin-bottom: 6px; }
+    .task-card-meta { font-size: 12px; color: var(--sub); display: flex; gap: 6px; flex-wrap: wrap; align-items: center; }
+
+    /* ─── Badges ─── */
+    .badge { display: inline-flex; align-items: center; padding: 2px 8px; border-radius: 20px; font-size: 11px; font-weight: 600; }
+    .badge-asap  { background: #FF3B3020; color: var(--danger); }
+    .badge-today { background: #FF950020; color: var(--orange); }
+    .badge-week  { background: #007AFF20; color: var(--accent); }
+    .badge-done  { background: #34C75920; color: var(--green); }
+    .badge-lock  { background: #8E8E9320; color: var(--sub); }
+
+    /* ─── Empty state ─── */
+    .empty-state { text-align: center; padding: 60px 20px; color: var(--sub); }
+    .empty-state .emoji { font-size: 48px; margin-bottom: 12px; }
+    .empty-state p { font-size: 15px; }
+
+    /* ─── FAB ─── */
+    #fab {
+      position: fixed; right: 20px; bottom: calc(20px + var(--safe-bottom));
+      width: 56px; height: 56px; border-radius: 50%;
+      background: var(--accent); color: white; font-size: 28px; line-height: 1;
+      border: none; box-shadow: 0 4px 12px rgba(0,122,255,0.4);
+      cursor: pointer; display: flex; align-items: center; justify-content: center;
+      z-index: 100; -webkit-tap-highlight-color: transparent;
+      transition: transform 0.15s, box-shadow 0.15s;
+    }
+    #fab:active { transform: scale(0.92); box-shadow: 0 2px 6px rgba(0,122,255,0.3); }
+
+    /* ─── Pop menu ─── */
+    #pop-backdrop { position: fixed; inset: 0; z-index: 150; display: none; }
+    #pop-backdrop.open { display: block; }
+    #pop-menu {
+      position: fixed; z-index: 151; background: var(--card);
+      border-radius: 14px; box-shadow: 0 8px 32px rgba(0,0,0,0.18), 0 2px 8px rgba(0,0,0,0.1);
+      min-width: 200px; overflow: hidden;
+      opacity: 0; transform: scale(0.88); pointer-events: none;
+      transition: opacity 0.18s cubic-bezier(0.4,0,0.2,1), transform 0.18s cubic-bezier(0.4,0,0.2,1);
+    }
+    #pop-menu.open { opacity: 1; transform: scale(1); pointer-events: auto; }
+    .pop-item {
+      width: 100%; padding: 15px 16px; border: none; background: none;
+      display: flex; align-items: center; gap: 12px; font-size: 15px; font-family: inherit;
+      cursor: pointer; position: relative; overflow: hidden;
+      -webkit-tap-highlight-color: transparent; touch-action: none; user-select: none;
+    }
+    .pop-item:active { background: var(--bg); }
+    .pop-item-icon { font-size: 17px; width: 22px; text-align: center; flex-shrink: 0; }
+    .pop-item-label { flex: 1; text-align: left; }
+    .pop-done .pop-item-label { color: var(--green); font-weight: 600; }
+    .pop-done-hint { font-size: 11px; color: var(--sub); margin-top: 1px; }
+    #pop-done-progress { position: absolute; left: 0; top: 0; bottom: 0; width: 0%; background: rgba(52,199,89,0.18); pointer-events: none; }
+    .pop-divider { height: 1px; background: rgba(0,0,0,0.08); margin: 0 12px; }
+
+    /* ─── Sub-screen shared ─── */
+    .sub-screen {
+      position: fixed; inset: 0; background: var(--bg); z-index: 220;
+      transform: translateX(100%);
+      transition: transform 0.35s cubic-bezier(0.4,0,0.2,1);
+      display: flex; flex-direction: column; padding-top: var(--safe-top);
+    }
+    .sub-screen.open { transform: translateX(0); }
+    .sub-header {
+      height: var(--header-h);
+      background: rgba(255,255,255,0.85);
+      backdrop-filter: saturate(180%) blur(20px);
+      -webkit-backdrop-filter: saturate(180%) blur(20px);
+      border-bottom: 1px solid rgba(0,0,0,0.1);
+      display: flex; align-items: center; justify-content: space-between;
+      padding-inline: 4px; flex-shrink: 0;
+    }
+    .sub-back-btn {
+      width: 44px; height: 44px; display: flex; align-items: center; justify-content: center;
+      background: none; border: none; cursor: pointer; font-size: 22px; color: var(--accent);
+      -webkit-tap-highlight-color: transparent; padding-bottom: 2px;
+    }
+    .sub-header-title { font-size: 17px; font-weight: 600; }
+
+    /* ─── Manage screen ─── */
+    #manage-sort-bar {
+      background: var(--card); padding: 10px 16px 12px;
+      border-bottom: 1px solid rgba(0,0,0,0.08);
+      display: flex; flex-direction: column; gap: 8px; flex-shrink: 0;
+    }
+    .manage-sort-row { display: flex; align-items: center; gap: 10px; }
+    .manage-sort-label { font-size: 12px; font-weight: 500; color: var(--sub); white-space: nowrap; min-width: 44px; }
+    #manage-body {
+      flex: 1; overflow-y: auto; padding: 12px 0 84px;
+      -webkit-overflow-scrolling: touch;
+    }
+    .manage-section-label {
+      font-size: 13px; font-weight: 600; color: var(--sub);
+      text-transform: uppercase; letter-spacing: 0.5px; padding: 20px 16px 8px;
+    }
+    .manage-empty { text-align: center; padding: 32px 20px; color: var(--sub); font-size: 14px; }
+    .manage-row {
+      display: flex; align-items: stretch; background: var(--card);
+      margin: 0 12px 8px; border-radius: 12px; overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.07); border: 2px solid transparent;
+      transition: border-color 0.15s, background 0.15s;
+    }
+    .manage-row.checked { border-color: var(--accent); background: rgba(0,122,255,0.07); }
+    .manage-cb-area {
+      width: 52px; display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; cursor: pointer; -webkit-tap-highlight-color: transparent;
+      touch-action: manipulation;
+    }
+    .manage-cb-icon {
+      width: 24px; height: 24px; border-radius: 7px;
+      border: 2px solid #C7C7CC; background: white;
+      display: flex; align-items: center; justify-content: center;
+      flex-shrink: 0; transition: background 0.15s, border-color 0.15s;
+      pointer-events: none;
+    }
+    .manage-cb-icon.on { background: var(--accent); border-color: var(--accent); }
+    .manage-cb-icon.on::after {
+      content: '';
+      display: block; width: 5px; height: 9px;
+      border-right: 2.5px solid white; border-bottom: 2.5px solid white;
+      transform: rotate(45deg) translate(-1px, -1px);
+    }
+    .manage-row-content {
+      flex: 1; padding: 12px 14px 12px 0;
+      cursor: pointer; -webkit-tap-highlight-color: transparent; min-width: 0;
+    }
+    .manage-row-title {
+      font-size: 14px; font-weight: 500; margin-bottom: 4px;
+      white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+    }
+    .manage-row-meta { font-size: 11px; color: var(--sub); display: flex; gap: 5px; flex-wrap: wrap; align-items: center; }
+    #manage-delete-bar {
+      position: absolute; left: 0; right: 0; bottom: 0;
+      padding: 12px 16px; padding-bottom: calc(12px + var(--safe-bottom));
+      background: rgba(255,255,255,0.96);
+      backdrop-filter: blur(12px); -webkit-backdrop-filter: blur(12px);
+      border-top: 1px solid rgba(0,0,0,0.1);
+      transform: translateY(100%); transition: transform 0.25s cubic-bezier(0.4,0,0.2,1); z-index: 1;
+    }
+    #manage-delete-bar.visible { transform: translateY(0); }
+    #manage-delete-btn {
+      width: 100%; background: var(--danger); color: white;
+      border: none; border-radius: 12px; padding: 14px;
+      font-size: 16px; font-weight: 600; cursor: pointer; font-family: inherit;
+      -webkit-tap-highlight-color: transparent;
+    }
+    #manage-delete-btn:active { opacity: 0.85; }
+
+    /* ─── Settings screen ─── */
+    #settings-body {
+      flex: 1; overflow-y: auto; padding: 20px 16px;
+      -webkit-overflow-scrolling: touch;
+    }
+    .settings-section { margin-bottom: 28px; }
+    .settings-section-title {
+      font-size: 13px; font-weight: 600; color: var(--sub);
+      text-transform: uppercase; letter-spacing: 0.5px;
+      margin-bottom: 8px; padding-left: 4px;
+    }
+    .settings-group {
+      background: var(--card); border-radius: 12px; overflow: hidden;
+      box-shadow: 0 1px 3px rgba(0,0,0,0.07);
+    }
+    .settings-row { padding: 14px 16px; border-bottom: 1px solid rgba(0,0,0,0.06); }
+    .settings-row:last-child { border-bottom: none; }
+    .settings-subrow { background: var(--bg); padding: 12px 16px; }
+    .settings-toggle-row { display: flex; align-items: center; justify-content: space-between; gap: 12px; }
+    .settings-toggle-label { font-size: 15px; font-weight: 500; color: var(--text); }
+    .settings-toggle-sub   { font-size: 12px; color: var(--sub); margin-top: 2px; }
+    .perm-btn {
+      width: 100%; padding: 11px 14px;
+      background: var(--accent); color: white;
+      border: none; border-radius: 10px;
+      font-size: 14px; font-weight: 600; cursor: pointer; font-family: inherit;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .perm-btn:active { opacity: 0.85; }
+    .perm-btn:disabled { background: var(--sub); cursor: default; }
+    #setting-perm-status { margin-top: 8px; font-size: 12px; color: var(--sub); text-align: center; line-height: 1.4; }
+
+    /* ─── Chips (shared) ─── */
+    .chip-group { display: flex; flex-wrap: wrap; gap: 8px; }
+    .chip {
+      flex: 1 1 auto; min-width: 0; padding: 8px 10px; border-radius: 10px;
+      background: var(--card); border: 2px solid transparent;
+      font-size: 13px; font-weight: 500; color: var(--sub);
+      cursor: pointer; text-align: center; white-space: nowrap;
+      -webkit-tap-highlight-color: transparent;
+      transition: background 0.15s, border-color 0.15s, color 0.15s;
+    }
+    .chip.selected { background: #007AFF18; border-color: var(--accent); color: var(--accent); }
+    .chip-group.deadline .chip { flex: 0 0 calc(33.333% - 6px); }
+    .chip-group.notify  .chip { flex: 1 1 0; min-width: 40px; padding: 8px 4px; }
+    .chip-group.msort   { flex-wrap: nowrap; gap: 6px; }
+    .chip-group.msort .chip { flex: 0 0 auto; padding: 6px 14px; font-size: 13px; }
+    .chip-group.interval { flex-wrap: nowrap; gap: 6px; }
+    .chip-group.interval .chip { flex: 1 1 0; padding: 8px 4px; font-size: 13px; }
+    #deadline-datetime-wrap { margin-top: 10px; display: none; }
+    #deadline-datetime-wrap.visible { display: block; }
+
+    /* ─── Toggle ─── */
+    .toggle-row {
+      display: flex; align-items: center; justify-content: space-between;
+      background: var(--card); border-radius: 10px; padding: 12px 14px;
+    }
+    .toggle-row-label { font-size: 15px; color: var(--text); }
+    .toggle-row-sub   { font-size: 12px; color: var(--sub); margin-top: 2px; }
+    .toggle { position: relative; width: 51px; height: 31px; flex-shrink: 0; }
+    .toggle input { opacity: 0; width: 0; height: 0; position: absolute; }
+    .toggle-track { position: absolute; inset: 0; background: #E5E5EA; border-radius: 31px; transition: background 0.25s; cursor: pointer; }
+    .toggle input:checked + .toggle-track { background: var(--green); }
+    .toggle-thumb {
+      position: absolute; top: 2px; left: 2px; width: 27px; height: 27px;
+      background: white; border-radius: 50%; box-shadow: 0 2px 4px rgba(0,0,0,0.3);
+      transition: transform 0.25s cubic-bezier(0.4,0,0.2,1); pointer-events: none;
+    }
+    .toggle input:checked ~ .toggle-thumb { transform: translateX(20px); }
+
+    /* ─── Sheet ─── */
+    #sheet-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.4);
+      z-index: 300; opacity: 0; pointer-events: none; transition: opacity 0.25s;
+    }
+    #sheet-overlay.open { opacity: 1; pointer-events: auto; }
+    #sheet {
+      position: fixed; left: 0; right: 0; bottom: 0;
+      background: var(--bg); border-radius: 20px 20px 0 0;
+      z-index: 301; transform: translateY(100%);
+      transition: transform 0.35s cubic-bezier(0.4,0,0.2,1);
+      padding-bottom: var(--safe-bottom); max-height: 94dvh;
+      display: flex; flex-direction: column;
+    }
+    #sheet.open { transform: translateY(0); }
+    .sheet-handle { width: 36px; height: 4px; background: #C7C7CC; border-radius: 2px; margin: 10px auto 0; flex-shrink: 0; }
+    .sheet-header { display: flex; align-items: center; justify-content: space-between; padding: 14px 20px 10px; flex-shrink: 0; }
+    .sheet-header h2 { font-size: 17px; font-weight: 600; }
+    .sheet-close {
+      width: 30px; height: 30px; border-radius: 50%; background: #E5E5EA;
+      border: none; cursor: pointer; font-size: 16px; color: var(--sub);
+      display: flex; align-items: center; justify-content: center;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .sheet-body { overflow-y: auto; padding: 0 16px 24px; flex: 1; -webkit-overflow-scrolling: touch; }
+
+    /* ─── Form ─── */
+    .form-group { margin-bottom: 18px; }
+    .form-label { font-size: 13px; color: var(--sub); margin-bottom: 8px; display: block; font-weight: 500; }
+    .form-input, .form-textarea {
+      width: 100%; background: var(--card); border: none; border-radius: 10px;
+      padding: 12px 14px; font-size: 15px; font-family: inherit; color: var(--text);
+      outline: none; -webkit-appearance: none; appearance: none;
+    }
+    .form-textarea { resize: none; min-height: 72px; }
+    .form-input:focus, .form-textarea:focus { box-shadow: 0 0 0 2px var(--accent); }
+    .form-submit {
+      width: 100%; background: var(--accent); color: white;
+      border: none; border-radius: 12px; padding: 15px;
+      font-size: 16px; font-weight: 600; cursor: pointer; margin-top: 8px;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .form-submit:active { opacity: 0.85; }
+
+    /* ─── Confirm dialog ─── */
+    #confirm-overlay {
+      position: fixed; inset: 0; background: rgba(0,0,0,0.5); z-index: 500;
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; pointer-events: none; transition: opacity 0.2s; padding-inline: 32px;
+    }
+    #confirm-overlay.open { opacity: 1; pointer-events: auto; }
+    #confirm-box {
+      background: var(--card); border-radius: 16px; width: 100%; max-width: 320px;
+      overflow: hidden; transform: scale(0.92); transition: transform 0.2s;
+    }
+    #confirm-overlay.open #confirm-box { transform: scale(1); }
+    .confirm-body { padding: 24px 20px 16px; text-align: center; }
+    .confirm-body h3 { font-size: 17px; font-weight: 600; margin-bottom: 8px; }
+    .confirm-title-preview {
+      font-size: 15px; font-weight: 500; color: var(--text);
+      margin-top: 10px; background: var(--bg); border-radius: 8px;
+      padding: 8px 12px; word-break: break-all;
+    }
+    .confirm-detail { font-size: 13px; color: var(--sub); line-height: 1.6; margin-top: 8px; }
+    .confirm-actions { display: flex; border-top: 1px solid rgba(0,0,0,0.08); }
+    .confirm-btn {
+      flex: 1; padding: 14px; border: none; background: none;
+      font-size: 16px; cursor: pointer; font-family: inherit;
+      -webkit-tap-highlight-color: transparent;
+    }
+    .confirm-btn:active { background: var(--bg); }
+    .confirm-btn + .confirm-btn { border-left: 1px solid rgba(0,0,0,0.08); }
+    .confirm-btn-cancel { color: var(--sub); }
+    .confirm-btn-ok     { color: var(--accent); font-weight: 600; }
+
+    /* ─── Sync indicator ─── */
+    #sync-indicator {
+      position: absolute; right: 12px;
+      width: 22px; height: 22px;
+      display: flex; align-items: center; justify-content: center;
+      opacity: 0; pointer-events: none; transition: opacity 0.25s;
+    }
+    #sync-indicator.active { opacity: 1; }
+    #sync-indicator svg { animation: spin 0.9s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
+  </style>
+</head>
+<body>
+
+  <!-- Header -->
+  <header>
+    <button id="hamburger-btn" aria-label="メニュー">
+      <svg width="22" height="15" viewBox="0 0 22 15" fill="currentColor" xmlns="http://www.w3.org/2000/svg">
+        <rect width="22" height="2.2" rx="1.1"/>
+        <rect y="6.4" width="22" height="2.2" rx="1.1"/>
+        <rect y="12.8" width="22" height="2.2" rx="1.1"/>
+      </svg>
+    </button>
+    <span class="header-title">タスク管理</span>
+    <div id="sync-indicator" aria-label="同期中">
+      <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--accent)" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round">
+        <path d="M21.5 2v6h-6M2.5 22v-6h6M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/>
+      </svg>
+    </div>
+  </header>
+
+  <!-- Notification banner -->
+  <div id="notif-banner" role="alert">
+    <div id="notif-banner-text">0件の未完了タスクがあります</div>
+    <div id="notif-banner-actions">
+      <button id="notif-banner-check" class="banner-btn">確認</button>
+      <button id="notif-banner-close" class="banner-btn">×</button>
+    </div>
+  </div>
+
+  <!-- Drawer -->
+  <div id="drawer-overlay"></div>
+  <nav id="drawer">
+    <div class="drawer-header">メニュー</div>
+    <ul class="drawer-menu">
+      <li><a href="#" id="menu-manage"><span class="icon">📋</span>一括管理</a></li>
+      <li><a href="#" id="menu-settings"><span class="icon">⚙️</span>設定</a></li>
+    </ul>
+  </nav>
+
+  <!-- Main -->
+  <main>
+    <div class="section-label">優先タスク</div>
+    <div class="task-list" id="priority-list"></div>
+  </main>
+
+  <!-- FAB -->
+  <button id="fab" aria-label="タスクを追加">＋</button>
+
+  <!-- Pop menu -->
+  <div id="pop-backdrop"></div>
+  <div id="pop-menu" role="menu">
+    <button id="pop-done-btn" class="pop-item pop-done" oncontextmenu="return false">
+      <div id="pop-done-progress"></div>
+      <span class="pop-item-icon">✓</span>
+      <div class="pop-item-label">
+        <div>完了</div>
+        <div class="pop-done-hint">2秒長押しで実行</div>
+      </div>
+    </button>
+    <div class="pop-divider"></div>
+    <button id="pop-edit-btn" class="pop-item">
+      <span class="pop-item-icon">✏️</span>
+      <span class="pop-item-label">編集</span>
+    </button>
+  </div>
+
+  <!-- Manage screen -->
+  <div id="manage-screen" class="sub-screen">
+    <div class="sub-header">
+      <button id="manage-back-btn" class="sub-back-btn" aria-label="戻る">‹</button>
+      <span class="sub-header-title">一括管理</span>
+      <div style="width:44px"></div>
+    </div>
+    <div id="manage-sort-bar">
+      <div class="manage-sort-row">
+        <span class="manage-sort-label">並べ替え</span>
+        <div class="chip-group msort" id="sort-key-chips">
+          <button type="button" class="chip selected" data-val="deadline">期限</button>
+          <button type="button" class="chip" data-val="start">開始日時</button>
+        </div>
+      </div>
+      <div class="manage-sort-row">
+        <span class="manage-sort-label">順序</span>
+        <div class="chip-group msort" id="sort-dir-chips">
+          <button type="button" class="chip selected" data-val="asc">昇順 ↑</button>
+          <button type="button" class="chip" data-val="desc">降順 ↓</button>
+        </div>
+      </div>
+    </div>
+    <div id="manage-body">
+      <div id="manage-pending-list"></div>
+      <div id="manage-done-section">
+        <div class="manage-section-label">完了済み</div>
+        <div id="manage-done-list"></div>
+      </div>
+    </div>
+    <div id="manage-delete-bar">
+      <button id="manage-delete-btn">削除</button>
+    </div>
+  </div>
+
+  <!-- Settings screen -->
+  <div id="settings-screen" class="sub-screen">
+    <div class="sub-header">
+      <button id="settings-back-btn" class="sub-back-btn" aria-label="戻る">‹</button>
+      <span class="sub-header-title">設定</span>
+      <div style="width:44px"></div>
+    </div>
+    <div id="settings-body">
+      <div class="settings-section">
+        <div class="settings-section-title">通知</div>
+        <div class="settings-group">
+          <!-- 通知ON/OFFトグル -->
+          <div class="settings-row">
+            <div class="settings-toggle-row">
+              <div>
+                <div class="settings-toggle-label">未完了タスク通知</div>
+                <div class="settings-toggle-sub">未完了タスクがある場合に通知します</div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="setting-notify-toggle">
+                <div class="toggle-track"></div>
+                <div class="toggle-thumb"></div>
+              </label>
+            </div>
+          </div>
+          <!-- 通知間隔（通知ONの場合のみ表示） -->
+          <div id="setting-interval-row" class="settings-row settings-subrow" style="display:none">
+            <div class="form-label" style="margin-bottom:8px">通知間隔</div>
+            <div class="chip-group interval" id="notify-interval-chips">
+              <button type="button" class="chip" data-val="30">30分</button>
+              <button type="button" class="chip selected" data-val="60">1時間</button>
+              <button type="button" class="chip" data-val="180">3時間</button>
+              <button type="button" class="chip" data-val="360">6時間</button>
+            </div>
+          </div>
+          <!-- バックグラウンド通知許可（通知ONの場合のみ表示） -->
+          <div id="setting-perm-row" class="settings-row settings-subrow" style="display:none">
+            <button id="setting-request-perm" class="perm-btn">バックグラウンド通知を許可する</button>
+            <div id="setting-perm-status"></div>
+          </div>
+        </div>
+      </div>
+      <div class="settings-section">
+        <div class="settings-section-title">データ同期</div>
+        <div class="settings-group">
+          <div class="settings-row">
+            <div class="settings-toggle-row">
+              <div>
+                <div class="settings-toggle-label">Googleドライブ連携</div>
+                <div class="settings-toggle-sub">tasks.jsonをGoogleドライブに自動同期</div>
+              </div>
+              <label class="toggle">
+                <input type="checkbox" id="setting-drive-toggle">
+                <div class="toggle-track"></div>
+                <div class="toggle-thumb"></div>
+              </label>
+            </div>
+          </div>
+          <div id="setting-drive-subrow" class="settings-row settings-subrow" style="display:none">
+            <div id="drive-signin-area">
+              <button id="drive-sign-in-btn" class="perm-btn">Googleアカウントでログイン</button>
+            </div>
+            <div id="drive-account-area" style="display:none">
+              <div id="drive-account-status" style="font-size:13px; color:var(--sub); margin-bottom:8px; text-align:center"></div>
+              <button id="drive-sign-out-btn" class="perm-btn" style="background:var(--danger)">ログアウト</button>
+            </div>
+            <div id="drive-sync-status" style="margin-top:8px; font-size:12px; color:var(--sub); text-align:center; min-height:16px"></div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Sheet -->
+  <div id="sheet-overlay"></div>
+  <div id="sheet" role="dialog" aria-modal="true">
+    <div class="sheet-handle"></div>
+    <div class="sheet-header">
+      <h2 id="sheet-title">タスクを追加</h2>
+      <button class="sheet-close" id="sheet-close-btn">✕</button>
+    </div>
+    <div class="sheet-body">
+      <form id="task-form" novalidate>
+        <div class="form-group">
+          <label class="form-label" for="task-title">タスク *</label>
+          <input class="form-input" id="task-title" type="text" placeholder="タスクを入力" autocomplete="off">
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="task-start">開始日時（任意）</label>
+          <input class="form-input" id="task-start" type="datetime-local">
+        </div>
+        <div class="form-group">
+          <div class="form-label">期限</div>
+          <div class="chip-group deadline" id="deadline-chips">
+            <button type="button" class="chip selected" data-val="asap">ASAP</button>
+            <button type="button" class="chip" data-val="today">今日中</button>
+            <button type="button" class="chip" data-val="fri">今週中(金)</button>
+            <button type="button" class="chip" data-val="sun">今週中(日)</button>
+            <button type="button" class="chip" data-val="datetime">日時指定</button>
+            <button type="button" class="chip" data-val="none">なし</button>
+          </div>
+          <div id="deadline-datetime-wrap">
+            <input class="form-input" id="task-deadline-dt" type="datetime-local">
+          </div>
+        </div>
+        <div class="form-group">
+          <div class="form-label">保護</div>
+          <div class="toggle-row">
+            <div>
+              <div class="toggle-row-label">完了後も保持</div>
+              <div class="toggle-row-sub">完了しても削除せず完了済みとして残す</div>
+            </div>
+            <label class="toggle">
+              <input type="checkbox" id="task-protect">
+              <div class="toggle-track"></div>
+              <div class="toggle-thumb"></div>
+            </label>
+          </div>
+        </div>
+        <div class="form-group">
+          <div class="form-label">通知優先（期限の何時間前から表示）</div>
+          <div class="chip-group notify" id="notify-chips">
+            <button type="button" class="chip" data-val="6">6h</button>
+            <button type="button" class="chip" data-val="12">12h</button>
+            <button type="button" class="chip selected" data-val="24">24h</button>
+            <button type="button" class="chip" data-val="48">48h</button>
+            <button type="button" class="chip" data-val="72">72h</button>
+            <button type="button" class="chip" data-val="168">1w</button>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label" for="task-note">備考（任意）</label>
+          <textarea class="form-textarea" id="task-note" placeholder="メモ"></textarea>
+        </div>
+        <button type="submit" class="form-submit" id="form-submit-btn">追加する</button>
+      </form>
+    </div>
+  </div>
+
+  <!-- Confirm dialog -->
+  <div id="confirm-overlay">
+    <div id="confirm-box">
+      <div class="confirm-body">
+        <h3 id="confirm-heading">タスクを追加しますか？</h3>
+        <div class="confirm-title-preview" id="confirm-preview"></div>
+        <div class="confirm-detail" id="confirm-detail"></div>
+      </div>
+      <div class="confirm-actions">
+        <button class="confirm-btn confirm-btn-cancel" id="confirm-cancel">キャンセル</button>
+        <button class="confirm-btn confirm-btn-ok" id="confirm-ok">追加</button>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // ─── Constants ────────────────────────────────────────────────
+    const STORAGE_KEY  = 'taskpwa_tasks';
+    const SETTINGS_KEY = 'taskpwa_settings';
+    const LONG_PRESS_MS = 2000;
+
+    // ─── Google Drive 設定 ────────────────────────────────────────
+    // Google Cloud Console > OAuth 2.0 クライアントID（ウェブアプリ）を設定してください
+    const GDRIVE_CLIENT_ID = '495529323787-74hfjtbva20vvj312f94g5dh4e5rgags.apps.googleusercontent.com';
+    const GDRIVE_FILE_NAME = 'tasks.json';
+    const GDRIVE_TOKEN_KEY = 'taskpwa_gdrive_token';
+    const GDRIVE_FILEID_KEY = 'taskpwa_gdrive_fileid';
+
+    const DEADLINE_LABEL = {
+      asap:'ASAP', today:'今日中', fri:'今週中(金)',
+      sun:'今週中(日)', datetime:'日時指定', none:'なし'
+    };
+    const NOTIFY_LABEL = { 6:'6h', 12:'12h', 24:'24h', 48:'48h', 72:'72h', 168:'1w' };
+
+    // ─── Task storage ─────────────────────────────────────────────
+    function loadTasks() {
+      try { return JSON.parse(localStorage.getItem(STORAGE_KEY)) || []; } catch { return []; }
+    }
+    function saveTasksLocal(t) { localStorage.setItem(STORAGE_KEY, JSON.stringify(t)); }
+    function saveTasks(t) { saveTasksLocal(t); GDriveSync.scheduleSyncToCloud(); }
+
+    function addTask(data) {
+      const t = loadTasks();
+      t.push({ id: Date.now(), ...data, done: false, createdAt: new Date().toISOString() });
+      saveTasks(t);
+    }
+    function updateTask(id, data) {
+      const t = loadTasks(), idx = t.findIndex(x => x.id === id); if (idx === -1) return;
+      const kept = { id: t[idx].id, done: t[idx].done, createdAt: t[idx].createdAt };
+      t[idx] = { ...kept, ...data }; saveTasks(t);
+    }
+    function completeTask(id) {
+      const t = loadTasks(), idx = t.findIndex(x => x.id === id); if (idx === -1) return;
+      if (t[idx].protect) { t[idx].done = true; t[idx].doneAt = new Date().toISOString(); }
+      else t.splice(idx, 1);
+      saveTasks(t); renderTasks();
+    }
+
+    // ─── Settings storage ─────────────────────────────────────────
+    function loadSettings() {
+      try { return JSON.parse(localStorage.getItem(SETTINGS_KEY)) || {}; } catch { return {}; }
+    }
+    function saveSettings(s) { localStorage.setItem(SETTINGS_KEY, JSON.stringify(s)); }
+    function getSettings() {
+      return { notifyEnabled: false, notifyInterval: 60, driveEnabled: false, ...loadSettings() };
+    }
+
+    // ─── Date helpers ─────────────────────────────────────────────
+    function resolveDeadline(type, customDt) {
+      const now = new Date();
+      if (type === 'asap' || type === 'none') return null;
+      if (type === 'today') { const d = new Date(now); d.setHours(23,59,0,0); return d.toISOString(); }
+      if (type === 'fri') {
+        const d = new Date(now), diff = (5 - d.getDay() + 7) % 7 || 7;
+        d.setDate(d.getDate() + diff); d.setHours(23,59,0,0); return d.toISOString();
+      }
+      if (type === 'sun') {
+        const d = new Date(now), diff = (7 - d.getDay()) % 7 || 7;
+        d.setDate(d.getDate() + diff); d.setHours(23,59,0,0); return d.toISOString();
+      }
+      if (type === 'datetime') return customDt ? new Date(customDt).toISOString() : null;
+      return null;
+    }
+    const p2 = n => String(n).padStart(2,'0');
+    function fmtDt(iso) {
+      if (!iso) return ''; const d = new Date(iso);
+      return `${d.getFullYear()}/${p2(d.getMonth()+1)}/${p2(d.getDate())} ${p2(d.getHours())}:${p2(d.getMinutes())}`;
+    }
+    function isoToLocal(iso) {
+      if (!iso) return ''; const d = new Date(iso);
+      return `${d.getFullYear()}-${p2(d.getMonth()+1)}-${p2(d.getDate())}T${p2(d.getHours())}:${p2(d.getMinutes())}`;
+    }
+
+    // ─── Main render ──────────────────────────────────────────────
+    function isPriority(task) {
+      if (task.done) return false;
+      if (task.deadlineType === 'asap') return true;
+      if (!task.deadlineIso) return false;
+      return (new Date(task.deadlineIso) - Date.now()) <= task.notifyHours * 3600000;
+    }
+
+    function renderTasks() {
+      const priorityList = document.getElementById('priority-list');
+      priorityList.innerHTML = '';
+      const priority = loadTasks().filter(isPriority);
+      if (priority.length === 0) {
+        priorityList.innerHTML = `<div class="empty-state"><div class="emoji">✅</div><p>優先タスクはありません</p></div>`;
+        return;
+      }
+      priority.forEach(t => priorityList.appendChild(createCard(t)));
+    }
+
+    function addBadgeEl(container, cls, text) {
+      const b = document.createElement('span'); b.className = `badge ${cls}`; b.textContent = text;
+      container.appendChild(b);
+    }
+    function buildMeta(task, container, includeNote = true) {
+      if (task.done)                          addBadgeEl(container, 'badge-done', '完了');
+      if (task.deadlineType === 'asap')       addBadgeEl(container, 'badge-asap', 'ASAP');
+      else if (task.deadlineType === 'today') addBadgeEl(container, 'badge-today', '今日中');
+      else if (task.deadlineType === 'fri')   addBadgeEl(container, 'badge-week', '今週中(金)');
+      else if (task.deadlineType === 'sun')   addBadgeEl(container, 'badge-week', '今週中(日)');
+      else if (task.deadlineIso) {
+        const s = document.createElement('span'); s.textContent = `期限 ${fmtDt(task.deadlineIso)}`; container.appendChild(s);
+      }
+      if (task.protect) addBadgeEl(container, 'badge-lock', '🔒 保護');
+      if (task.startIso) {
+        const s = document.createElement('span'); s.textContent = `開始 ${fmtDt(task.startIso)}`; container.appendChild(s);
+      }
+      if (includeNote && task.note) {
+        const s = document.createElement('span'); s.textContent = task.note; container.appendChild(s);
+      }
+    }
+
+    function createCard(task) {
+      const div = document.createElement('div');
+      div.className = 'task-card'; div.dataset.id = task.id;
+      const title = document.createElement('div');
+      title.className = 'task-card-title'; title.textContent = task.title;
+      if (task.done) title.style.textDecoration = 'line-through';
+      const meta = document.createElement('div'); meta.className = 'task-card-meta';
+      buildMeta(task, meta);
+      div.appendChild(title); div.appendChild(meta);
+      div.addEventListener('click', () => showPopMenu(task.id, div));
+      return div;
+    }
+
+    // ─── Chip helper ──────────────────────────────────────────────
+    function initChips(groupId, onChange) {
+      document.getElementById(groupId).querySelectorAll('.chip').forEach(chip => {
+        chip.addEventListener('click', () => {
+          document.getElementById(groupId).querySelectorAll('.chip').forEach(c => c.classList.remove('selected'));
+          chip.classList.add('selected'); onChange(chip.dataset.val);
+        });
+      });
+    }
+
+    // ─── Pop menu ─────────────────────────────────────────────────
+    let activePopId = null, longPressRaf = null, longPressStart = null;
+    const popBackdrop = document.getElementById('pop-backdrop');
+    const popMenu     = document.getElementById('pop-menu');
+    const popDoneBtn  = document.getElementById('pop-done-btn');
+    const popDoneBar  = document.getElementById('pop-done-progress');
+    const popEditBtn  = document.getElementById('pop-edit-btn');
+
+    function showPopMenu(taskId, cardEl) {
+      closePopMenu(); activePopId = taskId; cardEl.classList.add('pop-active');
+      const rect = cardEl.getBoundingClientRect(), menuW = 210, menuH = 108, margin = 8;
+      let top = rect.bottom + margin, originV = 'top';
+      if (top + menuH > window.innerHeight - 16) { top = rect.top - menuH - margin; originV = 'bottom'; }
+      let left = rect.left;
+      if (left + menuW > window.innerWidth - 8) left = window.innerWidth - menuW - 8;
+      if (left < 8) left = 8;
+      popMenu.style.top = `${top}px`; popMenu.style.left = `${left}px`;
+      popMenu.style.transformOrigin = `${originV} left`;
+      popBackdrop.classList.add('open'); popMenu.classList.add('open');
+    }
+    function closePopMenu() {
+      if (activePopId !== null) {
+        const card = document.querySelector(`.task-card[data-id="${activePopId}"]`);
+        if (card) card.classList.remove('pop-active');
+      }
+      popMenu.classList.remove('open'); popBackdrop.classList.remove('open');
+      activePopId = null; cancelLongPress();
+    }
+    popBackdrop.addEventListener('click', closePopMenu);
+
+    function startLongPress() {
+      cancelLongPress(); longPressStart = performance.now();
+      function tick(now) {
+        const pct = Math.min((now - longPressStart) / LONG_PRESS_MS * 100, 100);
+        popDoneBar.style.width = pct + '%';
+        if (pct >= 100) { const id = activePopId; closePopMenu(); completeTask(id); return; }
+        longPressRaf = requestAnimationFrame(tick);
+      }
+      longPressRaf = requestAnimationFrame(tick);
+    }
+    function cancelLongPress() {
+      if (longPressRaf) { cancelAnimationFrame(longPressRaf); longPressRaf = null; }
+      longPressStart = null; popDoneBar.style.width = '0%';
+    }
+    popDoneBtn.addEventListener('pointerdown',  e => { e.preventDefault(); startLongPress(); });
+    popDoneBtn.addEventListener('pointerup',     cancelLongPress);
+    popDoneBtn.addEventListener('pointerleave',  cancelLongPress);
+    popDoneBtn.addEventListener('pointercancel', cancelLongPress);
+    popEditBtn.addEventListener('click', () => { const id = activePopId; closePopMenu(); openEditSheet(id); });
+
+    // ─── Manage screen ────────────────────────────────────────────
+    let manageOpen = false, manageSortKey = 'deadline', manageSortDir = 'asc';
+    let managePendingSelected = new Set(), manageDoneSelected = new Set();
+    const manageScreen = document.getElementById('manage-screen');
+
+    function openManageScreen() {
+      managePendingSelected.clear(); manageDoneSelected.clear();
+      manageOpen = true; renderManageScreen(); manageScreen.classList.add('open');
+    }
+    function closeManageScreen() { manageScreen.classList.remove('open'); manageOpen = false; }
+
+    function sortedTasks(tasks) {
+      return [...tasks].sort((a, b) => {
+        const aA = a.deadlineType === 'asap', bA = b.deadlineType === 'asap';
+        if (aA !== bA) return aA ? -1 : 1; if (aA && bA) return 0;
+        let va, vb;
+        if (manageSortKey === 'deadline') {
+          va = a.deadlineIso ? new Date(a.deadlineIso).getTime() : null;
+          vb = b.deadlineIso ? new Date(b.deadlineIso).getTime() : null;
+        } else {
+          va = a.startIso ? new Date(a.startIso).getTime() : null;
+          vb = b.startIso ? new Date(b.startIso).getTime() : null;
+        }
+        if (va === null && vb === null) return (b.startIso?1:0) - (a.startIso?1:0);
+        if (va === null) return 1; if (vb === null) return -1;
+        if (va !== vb) return manageSortDir === 'asc' ? va - vb : vb - va;
+        return (b.startIso?1:0) - (a.startIso?1:0);
+      });
+    }
+    function renderManageScreen() {
+      if (!manageOpen) return;
+      const tasks = loadTasks();
+      const pending = sortedTasks(tasks.filter(t => !t.done));
+      const done    = sortedTasks(tasks.filter(t => t.done));
+      const pList = document.getElementById('manage-pending-list');
+      const dList = document.getElementById('manage-done-list');
+      const dSec  = document.getElementById('manage-done-section');
+      pList.innerHTML = '';
+      if (pending.length === 0) pList.innerHTML = '<div class="manage-empty">未完了タスクがありません</div>';
+      else pending.forEach(t => pList.appendChild(createManageRow(t, managePendingSelected)));
+      dList.innerHTML = '';
+      dSec.style.display = done.length === 0 ? 'none' : 'block';
+      done.forEach(t => dList.appendChild(createManageRow(t, manageDoneSelected)));
+      updateManageDeleteBar();
+    }
+    function createManageRow(task, selSet) {
+      const row = document.createElement('div');
+      row.className = 'manage-row' + (selSet.has(task.id) ? ' checked' : '');
+      row.dataset.id = task.id;
+
+      const cbArea = document.createElement('div');
+      cbArea.className = 'manage-cb-area';
+      const cbIcon = document.createElement('div');
+      cbIcon.className = 'manage-cb-icon' + (selSet.has(task.id) ? ' on' : '');
+      cbArea.appendChild(cbIcon);
+      cbArea.addEventListener('click', e => {
+        e.stopPropagation();
+        const next = !selSet.has(task.id);
+        if (next) selSet.add(task.id); else selSet.delete(task.id);
+        cbIcon.classList.toggle('on', next);
+        row.classList.toggle('checked', next);
+        updateManageDeleteBar();
+      });
+
+      const content = document.createElement('div');
+      content.className = 'manage-row-content';
+      const title = document.createElement('div');
+      title.className = 'manage-row-title';
+      title.textContent = task.title;
+      if (task.done) title.style.textDecoration = 'line-through';
+      const meta = document.createElement('div');
+      meta.className = 'manage-row-meta';
+      buildMeta(task, meta, false);
+      content.appendChild(title);
+      content.appendChild(meta);
+      content.addEventListener('click', () => openEditSheet(task.id));
+
+      row.appendChild(cbArea);
+      row.appendChild(content);
+      return row;
+    }
+    function updateManageDeleteBar() {
+      const total = managePendingSelected.size + manageDoneSelected.size;
+      const bar = document.getElementById('manage-delete-bar');
+      document.getElementById('manage-delete-btn').textContent = `${total}件を削除`;
+      if (total > 0) bar.classList.add('visible'); else bar.classList.remove('visible');
+    }
+    initChips('sort-key-chips', val => { manageSortKey = val; renderManageScreen(); });
+    initChips('sort-dir-chips', val => { manageSortDir = val; renderManageScreen(); });
+    document.getElementById('manage-back-btn').addEventListener('click', closeManageScreen);
+    document.getElementById('manage-delete-btn').addEventListener('click', () => {
+      const del = new Set([...managePendingSelected, ...manageDoneSelected]);
+      if (!del.size) return;
+      saveTasks(loadTasks().filter(t => !del.has(t.id)));
+      managePendingSelected.clear(); manageDoneSelected.clear();
+      renderManageScreen(); renderTasks();
+    });
+    document.getElementById('menu-manage').addEventListener('click', e => {
+      e.preventDefault(); closeDrawer(); openManageScreen();
+    });
+
+    // ─── Settings screen ──────────────────────────────────────────
+    let settingsOpen = false;
+    const settingsScreen = document.getElementById('settings-screen');
+
+    function openSettingsScreen() { settingsOpen = true; syncSettingsUI(); settingsScreen.classList.add('open'); }
+    function closeSettingsScreen() { settingsScreen.classList.remove('open'); settingsOpen = false; }
+
+    function syncSettingsUI() {
+      const s = getSettings();
+      document.getElementById('setting-notify-toggle').checked = s.notifyEnabled;
+      const intervalRow = document.getElementById('setting-interval-row');
+      const permRow     = document.getElementById('setting-perm-row');
+      const show = s.notifyEnabled;
+      intervalRow.style.display = show ? 'block' : 'none';
+      permRow.style.display     = show ? 'block' : 'none';
+      document.querySelectorAll('#notify-interval-chips .chip').forEach(c =>
+        c.classList.toggle('selected', Number(c.dataset.val) === s.notifyInterval));
+      updatePermStatusUI();
+      updateDriveSettingsUI();
+    }
+
+    function updatePermStatusUI() {
+      const el = document.getElementById('setting-perm-status');
+      const btn = document.getElementById('setting-request-perm');
+      if (!('Notification' in window)) {
+        el.textContent = 'このブラウザはバックグラウンド通知をサポートしていません';
+        btn.disabled = true; return;
+      }
+      const perm = Notification.permission;
+      if (perm === 'granted') {
+        el.textContent = '✓ バックグラウンド通知が許可されています';
+        btn.disabled = true;
+      } else if (perm === 'denied') {
+        el.textContent = '✗ 通知がブロックされています（端末の設定から変更してください）';
+        btn.disabled = true;
+      } else {
+        el.textContent = '未許可 — タップして許可を求める';
+        btn.disabled = false;
+      }
+    }
+
+    function showSyncIndicator(on) {
+      document.getElementById('sync-indicator').classList.toggle('active', on);
+    }
+    function showDriveSyncStatus(status) {
+      const el = document.getElementById('drive-sync-status');
+      if (!el) return;
+      const msg = { ok: '✓ 同期完了', error: '⚠ 同期エラー（次回再試行）', offline: '📶 オフライン中' };
+      el.textContent = msg[status] || '';
+    }
+    function updateDriveSettingsUI() {
+      const s = getSettings();
+      const toggle = document.getElementById('setting-drive-toggle');
+      const subrow = document.getElementById('setting-drive-subrow');
+      if (!toggle || !subrow) return;
+      toggle.checked = s.driveEnabled;
+      subrow.style.display = s.driveEnabled ? 'block' : 'none';
+      if (!s.driveEnabled) return;
+      const authed = GDriveSync.isAuthed();
+      document.getElementById('drive-signin-area').style.display  = authed ? 'none'  : 'block';
+      document.getElementById('drive-account-area').style.display = authed ? 'block' : 'none';
+      if (authed) document.getElementById('drive-account-status').textContent = '✓ Googleアカウント接続中';
+    }
+
+    document.getElementById('setting-notify-toggle').addEventListener('change', e => {
+      const s = getSettings(); s.notifyEnabled = e.target.checked; saveSettings(s);
+      syncSettingsUI();
+      if (s.notifyEnabled) { startNotifTimer(); requestWebNotifPermission(); }
+      else { stopNotifTimer(); hideBanner(); }
+    });
+
+    initChips('notify-interval-chips', val => {
+      const s = getSettings(); s.notifyInterval = Number(val); saveSettings(s);
+      if (s.notifyEnabled) startNotifTimer();
+    });
+
+    document.getElementById('setting-request-perm').addEventListener('click', () => requestWebNotifPermission());
+    document.getElementById('settings-back-btn').addEventListener('click', closeSettingsScreen);
+    document.getElementById('menu-settings').addEventListener('click', e => {
+      e.preventDefault(); closeDrawer(); openSettingsScreen();
+    });
+
+    async function requestWebNotifPermission() {
+      if (!('Notification' in window)) return;
+      if (Notification.permission === 'default') await Notification.requestPermission();
+      updatePermStatusUI();
+    }
+
+    // ─── Notification banner ──────────────────────────────────────
+    function showBanner(count) {
+      document.getElementById('notif-banner-text').textContent = `${count}件の未完了タスクがあります`;
+      document.getElementById('notif-banner').classList.add('show');
+    }
+    function hideBanner() { document.getElementById('notif-banner').classList.remove('show'); }
+
+    document.getElementById('notif-banner-check').addEventListener('click', () => {
+      hideBanner(); closeManageScreen(); closeSettingsScreen();
+      window.scrollTo({ top: 0, behavior: 'smooth' });
+    });
+    document.getElementById('notif-banner-close').addEventListener('click', hideBanner);
+
+    // ─── Web Audio API ────────────────────────────────────────────
+    let audioCtx = null;
+
+    // iOSでAudioContextをユーザー操作でアンロック
+    document.addEventListener('pointerdown', () => {
+      if (!audioCtx) {
+        try { audioCtx = new (window.AudioContext || window.webkitAudioContext)(); } catch(e) {}
+      }
+      if (audioCtx && audioCtx.state === 'suspended') audioCtx.resume();
+    }, { passive: true });
+
+    function playNotifSound() {
+      if (!audioCtx) return;
+      if (audioCtx.state === 'suspended') { audioCtx.resume(); }
+      try {
+        const ctx = audioCtx;
+        const now = ctx.currentTime;
+
+        function tone(freq, startOff, dur, vol, type = 'sine') {
+          const osc = ctx.createOscillator(), gain = ctx.createGain();
+          osc.connect(gain); gain.connect(ctx.destination);
+          osc.type = type; osc.frequency.value = freq;
+          gain.gain.setValueAtTime(0, now + startOff);
+          gain.gain.linearRampToValueAtTime(vol, now + startOff + 0.018);
+          gain.gain.exponentialRampToValueAtTime(0.001, now + startOff + dur);
+          osc.start(now + startOff); osc.stop(now + startOff + dur + 0.05);
+        }
+
+        // ディン（高め） → ドン（低め）の2音チャイム
+        tone(1046.5, 0,    0.75, 0.22); // C6
+        tone(1318.5, 0,    0.40, 0.09); // E6 (倍音)
+        tone(784.0,  0.32, 0.85, 0.22); // G5
+        tone(987.77, 0.32, 0.45, 0.09); // B5 (倍音)
+      } catch(e) {}
+    }
+
+    // ─── Notification timer ───────────────────────────────────────
+    let notifTimerId = null;
+
+    function startNotifTimer() {
+      stopNotifTimer();
+      const s = getSettings();
+      if (!s.notifyEnabled) return;
+      checkAndNotify();
+      notifTimerId = setInterval(checkAndNotify, s.notifyInterval * 60 * 1000);
+    }
+    function stopNotifTimer() {
+      if (notifTimerId) { clearInterval(notifTimerId); notifTimerId = null; }
+    }
+
+    function checkAndNotify() {
+      const s = getSettings();
+      if (!s.notifyEnabled) return;
+      const pending = loadTasks().filter(t => !t.done);
+      if (pending.length === 0) { hideBanner(); return; }
+
+      if (document.hidden) {
+        // バックグラウンド: Web Notification
+        if ('Notification' in window && Notification.permission === 'granted') {
+          new Notification('タスク管理', {
+            body: `${pending.length}件の未完了タスクがあります`,
+            tag:  'taskpwa-pending',
+          });
+        }
+      } else {
+        // フォアグラウンド: バナー + 音
+        showBanner(pending.length);
+        playNotifSound();
+      }
+    }
+
+    // フォアグラウンドに戻ったときにバナーを表示（音なし）
+    document.addEventListener('visibilitychange', () => {
+      if (document.hidden) return;
+      const s = getSettings();
+      if (!s.notifyEnabled) return;
+      const pending = loadTasks().filter(t => !t.done);
+      if (pending.length > 0) showBanner(pending.length);
+      else hideBanner();
+    });
+
+    // ─── Form state ───────────────────────────────────────────────
+    let selectedDeadline = 'asap', selectedNotify = 24;
+
+    initChips('deadline-chips', val => {
+      selectedDeadline = val;
+      const wrap = document.getElementById('deadline-datetime-wrap');
+      if (val === 'datetime') wrap.classList.add('visible');
+      else { wrap.classList.remove('visible'); document.getElementById('task-deadline-dt').value = ''; }
+    });
+    initChips('notify-chips', val => { selectedNotify = Number(val); });
+
+    function resetForm() {
+      document.getElementById('task-form').reset();
+      document.querySelectorAll('#deadline-chips .chip').forEach(c => c.classList.toggle('selected', c.dataset.val === 'asap'));
+      document.querySelectorAll('#notify-chips .chip').forEach(c => c.classList.toggle('selected', c.dataset.val === '24'));
+      selectedDeadline = 'asap'; selectedNotify = 24;
+      document.getElementById('deadline-datetime-wrap').classList.remove('visible');
+    }
+
+    // ─── Drawer ───────────────────────────────────────────────────
+    const drawer = document.getElementById('drawer'), drawerOverlay = document.getElementById('drawer-overlay');
+    function openDrawer()  { drawer.classList.add('open'); drawerOverlay.classList.add('open'); }
+    function closeDrawer() { drawer.classList.remove('open'); drawerOverlay.classList.remove('open'); }
+    document.getElementById('hamburger-btn').addEventListener('click', openDrawer);
+    drawerOverlay.addEventListener('click', closeDrawer);
+
+    // ─── Sheet ───────────────────────────────────────────────────
+    const sheet = document.getElementById('sheet'), sheetOverlay = document.getElementById('sheet-overlay');
+    let editingTaskId = null;
+
+    function openSheet() {
+      sheet.classList.add('open'); sheetOverlay.classList.add('open');
+      setTimeout(() => document.getElementById('task-title').focus(), 350);
+    }
+    function closeSheet() {
+      sheet.classList.remove('open'); sheetOverlay.classList.remove('open');
+      editingTaskId = null;
+      document.getElementById('sheet-title').textContent     = 'タスクを追加';
+      document.getElementById('form-submit-btn').textContent = '追加する';
+      resetForm();
+      if (manageOpen) renderManageScreen();
+    }
+    document.getElementById('fab').addEventListener('click', openSheet);
+    document.getElementById('sheet-close-btn').addEventListener('click', closeSheet);
+    sheetOverlay.addEventListener('click', closeSheet);
+
+    function openEditSheet(taskId) {
+      const task = loadTasks().find(t => t.id === taskId); if (!task) return;
+      editingTaskId = taskId;
+      document.getElementById('task-title').value     = task.title || '';
+      document.getElementById('task-start').value     = task.startIso ? isoToLocal(task.startIso) : '';
+      document.getElementById('task-protect').checked = !!task.protect;
+      document.getElementById('task-note').value      = task.note || '';
+      selectedDeadline = task.deadlineType || 'none';
+      document.querySelectorAll('#deadline-chips .chip').forEach(c => c.classList.toggle('selected', c.dataset.val === selectedDeadline));
+      const dtWrap = document.getElementById('deadline-datetime-wrap');
+      if (selectedDeadline === 'datetime') {
+        dtWrap.classList.add('visible');
+        document.getElementById('task-deadline-dt').value = task.deadlineIso ? isoToLocal(task.deadlineIso) : '';
+      } else { dtWrap.classList.remove('visible'); document.getElementById('task-deadline-dt').value = ''; }
+      selectedNotify = task.notifyHours || 24;
+      document.querySelectorAll('#notify-chips .chip').forEach(c => c.classList.toggle('selected', Number(c.dataset.val) === selectedNotify));
+      document.getElementById('sheet-title').textContent     = 'タスクを編集';
+      document.getElementById('form-submit-btn').textContent = '保存する';
+      openSheet();
+    }
+
+    // ─── Confirm dialog ───────────────────────────────────────────
+    const confirmOverlay = document.getElementById('confirm-overlay');
+    let pendingTask = null;
+
+    function showConfirm(task) {
+      pendingTask = task;
+      const isEdit = editingTaskId !== null;
+      document.getElementById('confirm-heading').textContent = isEdit ? 'タスクを更新しますか？' : 'タスクを追加しますか？';
+      document.getElementById('confirm-ok').textContent      = isEdit ? '更新' : '追加';
+      document.getElementById('confirm-preview').textContent = task.title;
+      const parts = [];
+      if (task.deadlineType && task.deadlineType !== 'none') parts.push(`期限：${DEADLINE_LABEL[task.deadlineType]}`);
+      if (task.deadlineIso && task.deadlineType === 'datetime') parts.push(`日時：${fmtDt(task.deadlineIso)}`);
+      if (task.startIso)  parts.push(`開始：${fmtDt(task.startIso)}`);
+      if (task.protect)   parts.push('保護：ON');
+      parts.push(`通知優先：${NOTIFY_LABEL[task.notifyHours]}`);
+      document.getElementById('confirm-detail').textContent = parts.join('　');
+      confirmOverlay.classList.add('open');
+    }
+    function hideConfirm() { confirmOverlay.classList.remove('open'); pendingTask = null; }
+    document.getElementById('confirm-cancel').addEventListener('click', hideConfirm);
+    document.getElementById('confirm-ok').addEventListener('click', () => {
+      if (pendingTask) {
+        if (editingTaskId !== null) updateTask(editingTaskId, pendingTask); else addTask(pendingTask);
+        renderTasks();
+      }
+      hideConfirm(); closeSheet();
+    });
+
+    // ─── Form submit ─────────────────────────────────────────────
+    document.getElementById('task-form').addEventListener('submit', e => {
+      e.preventDefault();
+      const title = document.getElementById('task-title').value.trim();
+      if (!title) { document.getElementById('task-title').focus(); return; }
+      const startVal = document.getElementById('task-start').value;
+      const dtVal    = document.getElementById('task-deadline-dt').value;
+      showConfirm({
+        title,
+        startIso:     startVal ? new Date(startVal).toISOString() : null,
+        deadlineType: selectedDeadline,
+        deadlineIso:  resolveDeadline(selectedDeadline, dtVal),
+        protect:      document.getElementById('task-protect').checked,
+        notifyHours:  selectedNotify,
+        note:         document.getElementById('task-note').value.trim(),
+      });
+    });
+
+    // ─── Google Drive Sync ────────────────────────────────────────
+    const GDriveSync = (() => {
+      let tokenClient = null;
+      let accessToken = null;
+      let tokenExpiry = 0;
+      let cachedFileId = null;
+      let syncing = false;
+      let pendingUpload = false;
+
+      function loadStored() {
+        try {
+          const d = JSON.parse(localStorage.getItem(GDRIVE_TOKEN_KEY) || 'null');
+          if (d && d.t && d.e > Date.now()) { accessToken = d.t; tokenExpiry = d.e; }
+        } catch {}
+        cachedFileId = localStorage.getItem(GDRIVE_FILEID_KEY) || null;
+      }
+      function storeToken(tok, expiresIn) {
+        accessToken = tok;
+        tokenExpiry = Date.now() + (expiresIn - 60) * 1000;
+        localStorage.setItem(GDRIVE_TOKEN_KEY, JSON.stringify({ t: accessToken, e: tokenExpiry }));
+      }
+      function clearAuth() {
+        accessToken = null; tokenExpiry = 0; cachedFileId = null;
+        localStorage.removeItem(GDRIVE_TOKEN_KEY); localStorage.removeItem(GDRIVE_FILEID_KEY);
+      }
+      function isAuthed() { return !!accessToken && Date.now() < tokenExpiry; }
+
+      function initGIS() {
+        if (!GDRIVE_CLIENT_ID || typeof google === 'undefined' || tokenClient) return;
+        tokenClient = google.accounts.oauth2.initTokenClient({
+          client_id: GDRIVE_CLIENT_ID,
+          scope: 'https://www.googleapis.com/auth/drive.file',
+          callback: () => {},
+        });
+      }
+      function requestToken(prompt) {
+        return new Promise((resolve, reject) => {
+          initGIS();
+          if (!tokenClient) { reject(new Error('GDRIVE_CLIENT_ID が未設定です')); return; }
+          tokenClient.callback = r => {
+            if (r.error) { reject(new Error(r.error)); return; }
+            storeToken(r.access_token, r.expires_in);
+            resolve(r.access_token);
+          };
+          tokenClient.requestAccessToken({ prompt: prompt || '' });
+        });
+      }
+      async function getToken() {
+        if (isAuthed()) return accessToken;
+        return requestToken('');
+      }
+
+      async function findFileId(token) {
+        if (cachedFileId) return cachedFileId;
+        const q = encodeURIComponent(`name='${GDRIVE_FILE_NAME}' and trashed=false`);
+        const r = await fetch(
+          `https://www.googleapis.com/drive/v3/files?q=${q}&fields=files(id)&spaces=drive`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (!r.ok) throw new Error('search_failed');
+        const { files } = await r.json();
+        if (files && files.length > 0) {
+          cachedFileId = files[0].id; localStorage.setItem(GDRIVE_FILEID_KEY, cachedFileId);
+        }
+        return cachedFileId;
+      }
+
+      async function upload(tasks) {
+        const token = await getToken();
+        const id    = await findFileId(token);
+        const body  = JSON.stringify(tasks, null, 2);
+        if (id) {
+          const r = await fetch(
+            `https://www.googleapis.com/upload/drive/v3/files/${id}?uploadType=media`,
+            { method: 'PATCH', headers: { Authorization: `Bearer ${token}`, 'Content-Type': 'application/json' }, body }
+          );
+          if (!r.ok) { cachedFileId = null; localStorage.removeItem(GDRIVE_FILEID_KEY); throw new Error('upload_failed'); }
+        } else {
+          const form = new FormData();
+          form.append('metadata', new Blob([JSON.stringify({ name: GDRIVE_FILE_NAME, mimeType: 'application/json' })], { type: 'application/json' }));
+          form.append('media',    new Blob([body], { type: 'application/json' }));
+          const r = await fetch(
+            'https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart&fields=id',
+            { method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: form }
+          );
+          if (!r.ok) throw new Error('create_failed');
+          const { id: newId } = await r.json();
+          cachedFileId = newId; localStorage.setItem(GDRIVE_FILEID_KEY, newId);
+        }
+      }
+
+      async function download() {
+        const token = await getToken();
+        const id    = await findFileId(token);
+        if (!id) return null;
+        const r = await fetch(
+          `https://www.googleapis.com/drive/v3/files/${id}?alt=media`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (!r.ok) throw new Error('download_failed');
+        return r.json();
+      }
+
+      async function scheduleSyncToCloud() {
+        if (!getSettings().driveEnabled || !isAuthed()) return;
+        if (!navigator.onLine) { pendingUpload = true; showDriveSyncStatus('offline'); return; }
+        if (syncing) { pendingUpload = true; return; }
+        syncing = true; showSyncIndicator(true);
+        try {
+          await upload(loadTasks());
+          pendingUpload = false; showDriveSyncStatus('ok');
+        } catch (e) {
+          console.warn('GDrive upload:', e.message); pendingUpload = true; showDriveSyncStatus('error');
+        } finally {
+          syncing = false; showSyncIndicator(false);
+        }
+      }
+
+      async function syncFromCloud() {
+        if (!getSettings().driveEnabled) return;
+        if (!navigator.onLine) return;
+        showSyncIndicator(true);
+        try {
+          const data = await download();
+          if (Array.isArray(data)) {
+            saveTasksLocal(data); renderTasks();
+            if (manageOpen) renderManageScreen();
+            showDriveSyncStatus('ok');
+          } else {
+            await upload(loadTasks()); showDriveSyncStatus('ok');
+          }
+        } catch (e) {
+          console.warn('GDrive download:', e.message); showDriveSyncStatus('error');
+        } finally {
+          showSyncIndicator(false);
+        }
+      }
+
+      async function signIn() {
+        try {
+          await requestToken('select_account');
+          updateDriveSettingsUI();
+          await syncFromCloud();
+        } catch (e) {
+          console.warn('GDrive signIn:', e.message); updateDriveSettingsUI();
+        }
+      }
+      function signOut() {
+        if (accessToken && typeof google !== 'undefined') {
+          try { google.accounts.oauth2.revoke(accessToken, () => {}); } catch {}
+        }
+        clearAuth(); updateDriveSettingsUI(); showDriveSyncStatus('');
+      }
+      function init() { loadStored(); initGIS(); }
+
+      return { init, signIn, signOut, isAuthed, scheduleSyncToCloud, syncFromCloud,
+               flushPending: scheduleSyncToCloud };
+    })();
+
+    // ─── Drive 設定ハンドラ ───────────────────────────────────────
+    document.getElementById('setting-drive-toggle').addEventListener('change', async e => {
+      const s = getSettings(); s.driveEnabled = e.target.checked; saveSettings(s);
+      updateDriveSettingsUI();
+      if (s.driveEnabled) {
+        if (!GDriveSync.isAuthed()) await GDriveSync.signIn();
+        else await GDriveSync.syncFromCloud();
+      }
+    });
+    document.getElementById('drive-sign-in-btn').addEventListener('click',  () => GDriveSync.signIn());
+    document.getElementById('drive-sign-out-btn').addEventListener('click', () => GDriveSync.signOut());
+
+    window.addEventListener('online', () => GDriveSync.flushPending());
+    if (navigator.serviceWorker) {
+      navigator.serviceWorker.addEventListener('message', e => {
+        if (e.data && e.data.type === 'SYNC_TASKS') GDriveSync.flushPending();
+      });
+    }
+
+    // ─── Init ────────────────────────────────────────────────────
+    GDriveSync.init();
+    renderTasks();
+    if (getSettings().notifyEnabled) startNotifTimer();
+    if (getSettings().driveEnabled && GDriveSync.isAuthed() && navigator.onLine) {
+      GDriveSync.syncFromCloud();
+    }
+
+    document.addEventListener('DOMContentLoaded', () => {
+      if ('serviceWorker' in navigator) {
+        navigator.serviceWorker.register('/service_worker.js').catch(() => {});
+      }
+    });
+  </script>
+</body>
+</html>
